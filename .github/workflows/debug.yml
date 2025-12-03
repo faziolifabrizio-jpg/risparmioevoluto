@@ -1,7 +1,7 @@
 name: DebugAmazonHTML
 
 on:
-  workflow_dispatch:   # avvio manuale da Actions
+  workflow_dispatch:   # solo avvio manuale
 
 jobs:
   run:
@@ -17,10 +17,20 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests beautifulsoup4
+          fi
 
       - name: List files (debug)
-        run: ls -R
+        run: ls -lah
+
+      - name: Print Python and pip versions
+        run: |
+          python --version
+          pip --version
 
       - name: Run bot in debug mode
         env:
