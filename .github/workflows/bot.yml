@@ -1,21 +1,26 @@
-
-name: Amazon Telegram Bot
+name: AmazonBot
 
 on:
   schedule:
-    - cron: "0 9,21 * * *"
-  workflow_dispatch: {}
+    # Primo invio oggi alle 23:00 CET (22:00 UTC)
+    - cron: "0 22 3 12 *"   # 3 dicembre alle 22:00 UTC
+    # Da domani ogni giorno alle 09:00 CET (08:00 UTC)
+    - cron: "0 8 * * *"
+    # Da domani ogni giorno alle 21:00 CET (20:00 UTC)
+    - cron: "0 20 * * *"
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install requirements
         run: pip install -r requirements.txt
