@@ -22,21 +22,28 @@ def send_telegram_photo(photo_url, caption):
     print("Telegram photo response:", resp.status_code, resp.text)
 
 def fetch_html():
+    print("Entrato in fetch_html, DEBUG:", DEBUG)
     headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(URL, headers=headers, timeout=20)
+    try:
+        r = requests.get(URL, headers=headers, timeout=20)
+    except Exception as e:
+        print("Errore durante la richiesta:", e)
+        return ""
+
     print("Amazon status:", r.status_code)
 
     if DEBUG:
-        print("DEBUG mode attivo:", DEBUG)
         print("=== HTML DEBUG START ===")
-        print(r.text[:2000])  # stampiamo i primi 2000 caratteri per non saturare i log
+        print(r.text[:2000])  # stampiamo i primi 2000 caratteri
         print("=== HTML DEBUG END ===")
 
     return r.text if r.status_code == 200 else ""
 
 def extract():
+    print("Entrato in extract()")
     html = fetch_html()
     if not html:
+        print("Nessun HTML ricevuto")
         return []
 
     soup = BeautifulSoup(html, "html.parser")
@@ -61,4 +68,46 @@ def extract():
         old_price_node = node.select_one("span.a-text-price span.a-offscreen")
         old_price = old_price_node.get_text(strip=True) if old_price_node else "N/A"
 
-        reviews_node = node.select
+        reviews_node = node.select_one("span.a-size-base") or node.select_one("span.a-size-small")
+        reviews = reviews_node.get_text(strip=True) if reviews_node else "N/A"
+
+        return {"title": title, "img": img, "price": price, "old_price": old_price, "reviews": reviews}
+
+    for node in deal_items[:8]:
+        results.append(parse_node(node))
+
+    if not results:
+        print("Fallback parsing attivato.")
+        for img in soup.select("img.s-image")[:5]:
+            title = img.get("alt", "N/A")
+            results.append({"title": title, "img": img.get("src"), "price": "N/A", "old_price": "N/A", "reviews": "N/A"})
+
+    print("Totale risultati estratti:", len(results))
+    return results[:5]
+
+def main():
+    print("Entrato in main(), DEBUG mode attivo:", DEBUG)
+    products = extract()
+    print("Prodotti estratti:", len(products))
+
+    if not products:
+        send_telegram_text("⚠️ Nessun prodotto trovato su Amazon GoldBox. Il bot è attivo ma non ha trovato offerte.")
+        return
+
+    for p in products:
+        if not p["img"]:
+            continue
+        caption = f"""🔥 *OFFERTA AMAZON*
+
+📌 *{p['title']}*
+
+💶 Prezzo: {p['price']}
+❌ Prezzo consigliato: {p['old_price']}
+⭐ Recensioni: {p['reviews']}
+
+🔗 https://www.amazon.it/gp/goldbox
+"""
+        send_telegram_photo(p["img"], caption)
+
+if __name__ == "__main__":
+    main()
