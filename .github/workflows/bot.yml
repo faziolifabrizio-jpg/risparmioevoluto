@@ -1,13 +1,16 @@
-name: TestTelegram
+name: AmazonBot
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # lo avvii manualmente da Actions
+  schedule:
+    - cron: "0 8 * * *"   # esempio: ogni giorno alle 08:00 UTC
 
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Setup Python
@@ -15,11 +18,11 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install requests
-        run: pip install requests
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-      - name: Run test
+      - name: Run bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python test_telegram.py
+        run: python bot.py
