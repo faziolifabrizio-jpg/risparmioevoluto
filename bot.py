@@ -19,31 +19,35 @@ def send_telegram(photo_url, text):
     print("Telegram response:", resp.status_code, resp.text)
 
 def extract():
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                             "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
     r = requests.get(URL, headers=headers)
     print("Amazon status:", r.status_code)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    items = soup.select("div.GBHb")
+    # Ogni offerta è dentro un div con classe DealGridItem
+    items = soup.select("div.DealGridItem-module__dealItem_")
     print(f"Trovati {len(items)} items")
     results = []
     for item in items[:5]:
-        title = item.select_one("h2")
+        # Titolo
+        title = item.select_one("span.a-text-normal")
         title = title.get_text(strip=True) if title else "N/A"
 
+        # Immagine
         img = item.select_one("img")
         img = img["src"] if img else None
 
-        price = item.select_one(".a-price .a-offscreen")
+        # Prezzo attuale
+        price = item.select_one("span.a-price span.a-offscreen")
         price = price.get_text(strip=True) if price else "N/A"
 
-        old_price = item.select_one(".a-text-price .a-offscreen")
+        # Prezzo vecchio
+        old_price = item.select_one("span.a-text-price span.a-offscreen")
         old_price = old_price.get_text(strip=True) if old_price else "N/A"
 
-        last30 = item.select_one(".a-size-base.a-color-secondary")
-        last30 = last30.get_text(strip=True) if last30 else "N/A"
-
-        reviews = item.select_one(".a-size-small .a-link-normal")
+        # Recensioni
+        reviews = item.select_one("span.a-size-base")
         reviews = reviews.get_text(strip=True) if reviews else "N/A"
 
         results.append({
@@ -51,7 +55,6 @@ def extract():
             "img": img,
             "price": price,
             "old_price": old_price,
-            "last30": last30,
             "reviews": reviews
         })
     return results
@@ -70,7 +73,6 @@ def main():
 
 💶 Prezzo: {p['price']}
 ❌ Prezzo Consigliato: {p['old_price']}
-📉 Ultimi 30 giorni: {p['last30']}
 ⭐ Recensioni: {p['reviews']}
 
 🔗 https://www.amazon.it/gp/goldbox
