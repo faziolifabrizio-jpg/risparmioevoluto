@@ -13,7 +13,7 @@ def send_telegram(photo_url, text):
         "chat_id": TELEGRAM_CHAT_ID,
         "caption": text,
         "photo": photo_url,
-        "parse_mode": "Markdown"  # abilita grassetto, emoji ecc.
+        "parse_mode": "Markdown"
     }
     resp = requests.post(url, data=data)
     print("Telegram response:", resp.status_code, resp.text)
@@ -75,6 +75,7 @@ def main():
 
 🔗 https://www.amazon.it/gp/goldbox
 """
+        print("Invio prodotto:", p['title'])
         send_telegram(p["img"], text)
 
 if __name__ == "__main__":
