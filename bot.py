@@ -131,12 +131,4 @@ def main():
         send_telegram_text("⚠️ Nessun prodotto trovato. Amazon potrebbe servire contenuti via JS o CAPTCHA. Riproveremo più tardi.")
         return
 
-    for p in products:
-        if not p.get("img"):
-            continue
-        caption = (
-            "🔥 *OFFERTA AMAZON*\n\n"
-            f"📌 *{p.get('title','N/A')}*\n\n"
-            f"💶 Prezzo: {p.get('price','N/A')}\n"
-    )
-    send_telegram_photo(p["img"], caption)
+    for
