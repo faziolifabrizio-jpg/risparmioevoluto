@@ -139,4 +139,4 @@ def extract() -> list:
         "https://www.amazon.it/s?i=digital-text&rh=p_n_deal_type%3A26980358031&dc&sort=featured-rank",  # Kindle
         "https://www.amazon.it/s?i=stripbooks&rh=p_n_deal_type%3A26980358031&dc&sort=featured-rank",  # Libri
         "https://www.amazon.it/s?i=fashion&rh=p_n_deal_type%3A26980358031&dc&sort=featured-rank",  # Moda
-        "https://www.amazon.it/s?i=baby&rh=p_n_deal_type%3A26980358031&dc&sort=featured-rank", 
+        "https://www.amazon.it/s?i=baby&rh=p_n_deal_type%3A26980358031&dc
