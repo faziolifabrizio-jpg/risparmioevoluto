@@ -285,5 +285,7 @@ def scheduler_loop():
 
 
 if __name__ == "__main__":
-    print("[__main__] Avvio bot Amazon con scheduler interno…", flush=True)
-    scheduler_loop()
+    print("[__main__] Avvio TEST immediato…", flush=True)
+    main_routine()      # <<< test
+    # scheduler_loop()  # puoi commentarlo per il test
+
