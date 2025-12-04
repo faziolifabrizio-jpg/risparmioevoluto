@@ -6,7 +6,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG = os.getenv("DEBUG", "0") == "1"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
     "Referer": "https://www.amazon.it/",
@@ -59,11 +60,13 @@ def is_captcha(html: str) -> bool:
     return ("robot check" in t) or ("inserisci i caratteri" in t) or ("captcha" in t)
 
 def fetch_html(url: str) -> str:
+    print(f"[fetch_html] GET {url}", flush=True)
     try:
         r = requests.get(url, headers=HEADERS, timeout=25)
-        print(f"[fetch_html] {url} status:", r.status_code, flush=True)
+        print(f"[fetch_html] status: {r.status_code}", flush=True)
         if DEBUG:
-            print("=== HTML DEBUG START ==="); print(r.text[:1500]); print("=== HTML DEBUG END ===")
+            with open(f"html_debug_{int(time.time())}.txt", "w", encoding="utf-8") as f:
+                f.write(r.text)
         if r.status_code == 200 and not is_captcha(r.text):
             return r.text
     except Exception as e:
@@ -108,19 +111,16 @@ def parse_cards(html: str) -> list:
 
 def extract() -> list:
     print("INIZIO FALLBACK SEARCH", flush=True)
-    all_results = []
     for url in FALLBACK_URLS:
         time.sleep(random.uniform(1.2, 2.5))
         html = fetch_html(url)
         if not html:
-            print("Fallback: nessun HTML, continuo", flush=True); continue
+            continue
         res = parse_cards(html)
         if res:
             print(f"Risultati ottenuti da: {url}", flush=True)
-            all_results = res
-            break
-    print("Totale risultati estratti:", len(all_results), flush=True)
-    return all_results[:8]
+            return res[:8]
+    return []
 
 def main():
     print("Entrato in main(), DEBUG mode attivo:", DEBUG, flush=True)
@@ -128,7 +128,7 @@ def main():
     print("Prodotti estratti:", len(products), flush=True)
 
     if not products:
-        send_telegram_text("⚠️ Nessun prodotto trovato. Amazon potrebbe servire contenuti via JS o CAPTCHA. Riprovo più tardi.")
+        send_telegram_text("⚠️ Nessun prodotto trovato. Amazon potrebbe servire contenuti via JS o CAPTCHA. Riproveremo più tardi.")
         return
 
     for p in products:
@@ -138,13 +138,4 @@ def main():
             "🔥 *OFFERTA AMAZON*\n\n"
             f"📌 *{p.get('title','N/A')}*\n\n"
             f"💶 Prezzo: {p.get('price','N/A')}\n"
-            f"❌ Prezzo consigliato: {p.get('old_price','N/A')}\n"
-            f"⭐ Recensioni: {p.get('reviews','N/A')}\n"
-        )
-        send_telegram_photo(p["img"], caption)
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print("Errore in main:", e, flush=True)
+            f"❌ Prezzo consigliato: {p.get('old_price','N
