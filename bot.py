@@ -137,5 +137,4 @@ def main():
         caption = (
             "🔥 *OFFERTA AMAZON*\n\n"
             f"📌 *{p.get('title','N/A')}*\n\n"
-            f"💶 Prezzo: {p.get('price','N/A')}\n"
-            f"❌ Prezzo consigliato: {p
+            f"💶 Prezzo: {p.get('price','N/A')
