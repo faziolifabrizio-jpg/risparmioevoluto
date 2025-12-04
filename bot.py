@@ -181,4 +181,5 @@ def scheduler_loop():
 
 
 if __name__ == "__main__":
+    main_routine()  # TEST immediato
     scheduler_loop()
