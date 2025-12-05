@@ -1,13 +1,15 @@
 services:
-  - type: web
+  - type: worker
     name: amazon-affiliate-bot
-    env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python bot.py"
-    plan: free
-    autoDeploy: true
+    runtime: docker
+    repo: https://github.com/faziolifabrizio-jpg/risparmioevoluto
+    branch: main
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
+    plan: free
+    cronSchedule:
+      - "0 9 * * *"
+      - "0 21 * * *"
