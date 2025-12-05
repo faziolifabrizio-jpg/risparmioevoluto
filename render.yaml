@@ -1,15 +1,14 @@
 services:
   - type: worker
     name: amazon-affiliate-bot
-    runtime: docker
-    repo: https://github.com/faziolifabrizio-jpg/risparmioevoluto
-    branch: main
-    envVars:
-      - key: TELEGRAM_TOKEN
-        sync: false
-      - key: TELEGRAM_CHAT_ID
-        sync: false
-    plan: free
-    cronSchedule:
-      - "0 9 * * *"
-      - "0 21 * * *"
+    env: python
+    region: frankfurt
+    plan: starter  # compatibile FREE
+    startCommand: "python bot.py"
+    autoDeploy: true
+
+cronJobs:
+  - name: amazon-affiliate-cron
+    schedule: "0 */3 * * *"   # ogni 3 ore
+    command: "python bot.py"
+    service: amazon-affiliate-bot
