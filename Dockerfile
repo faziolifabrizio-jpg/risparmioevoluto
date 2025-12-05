@@ -1,34 +1,15 @@
-FROM python:3.11
-
-# install system dependencies
-RUN apt-get update && apt-get install -y \
-    wget \
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libxdamage1 \
-    libxcomposite1 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libxshmfence1 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libcairo2 \
-    libxcursor1 \
-    libxfixes3 \
-    && rm -rf /var/lib/apt/lists/*
+FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
 
 WORKDIR /app
 
-# install python deps
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# install playwright browsers
-RUN playwright install --with-deps chromium
-
+# Copia tutto il codice
 COPY . .
 
-CMD ["python", "server.py"]
+# Installa tutte le dipendenze Python
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Playwright browser deps
+RUN playwright install --with-deps chromium
+
+# Avvio bot
+CMD ["python", "bot.py"]
