@@ -1,198 +1,192 @@
-import asyncio
-from playwright.async_api import async_playwright
-import json
 import os
+import asyncio
+import json
+from playwright.async_api import async_playwright
+import time
 import requests
-from datetime import datetime, timedelta
-from bs4 import BeautifulSoup
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-AFF_TAG = "risparmioevol-21"
+AFFILIATE_TAG = os.getenv("AFFILIATE_TAG", "risparmioevol-21")
 
 GOLDBOX_URL = "https://www.amazon.it/gp/goldbox"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept-Language": "it-IT,it;q=0.9"
-}
-
-# --------------------------------------
-# TELEGRAM
-# --------------------------------------
-def send_tg(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg,
-        "parse_mode": "HTML"
-    })
-
-# --------------------------------------
-# LOAD / SAVE PUBLISHED
-# --------------------------------------
-def load_published():
-    if not os.path.exists("published.json"):
-        return []
-    return json.load(open("published.json"))
-
-def save_published(lst):
-    json.dump(lst, open("published.json", "w"))
-
-# --------------------------------------
-# PRICE PARSER
-# --------------------------------------
-def clean_price(p):
-    if not p:
-        return None
-    p = p.replace("€", "").replace(",", ".").strip()
+# ---- TELEGRAM ----
+def tg(text):
     try:
-        return float(p)
-    except:
-        return None
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
+            timeout=10
+        )
+    except Exception as e:
+        print("[TG ERROR]", e)
 
-# --------------------------------------
-# SCRAPE PAGINA PRODOTTO
-# --------------------------------------
-async def scrape_product(page, asin):
-    url = f"https://www.amazon.it/dp/{asin}?tag={AFF_TAG}"
 
-    await page.goto(url)
+# ---- BROWSER LAUNCH (COMPATIBILE RAILWAY FREE) ----
+async def launch_browser(playwright):
+    return await playwright.chromium.launch(
+        headless=True,
+        args=[
+            "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--no-zygote",
+            "--single-process"
+        ]
+    )
 
-    # titolo
+
+# ---- ESTRAE I PRODOTTI DALLA PAGINA GOLDBOX ----
+async def scrape_goldbox(page):
+    print("[SCRAPE] Apro Goldbox…")
+    await page.goto(GOLDBOX_URL, wait_until="domcontentloaded", timeout=60000)
+
+    # cookies
     try:
-        title = await page.locator("#productTitle").inner_text(timeout=5000)
-        title = title.strip()
-    except:
-        title = "N/A"
-
-    # prezzo attuale
-    try:
-        price_now = await page.locator("span.a-price span.a-offscreen").first.inner_text()
-        price_now = clean_price(price_now)
-    except:
-        price_now = None
-
-    # prezzo consigliato (prezzo barrato)
-    try:
-        price_old = await page.locator("span.a-text-price span.a-offscreen").first.inner_text()
-        price_old = clean_price(price_old)
-    except:
-        price_old = None
-
-    # stelle
-    try:
-        stars = await page.locator("span[data-hook='rating-out-of-text']").inner_text()
-    except:
-        stars = "N/A"
-
-    # recensioni
-    try:
-        reviews = await page.locator("#acrCustomerReviewText").inner_text()
-    except:
-        reviews = "N/A"
-
-    discount = 0
-    if price_now and price_old and price_old > price_now:
-        discount = int((1 - price_now / price_old) * 100)
-
-    return {
-        "asin": asin,
-        "title": title,
-        "price_now": price_now,
-        "price_old": price_old,
-        "discount": discount,
-        "stars": stars,
-        "reviews": reviews
-    }
-
-# --------------------------------------
-# GOLD BOX LIST
-# --------------------------------------
-async def get_goldbox_asins(page):
-    await page.goto(GOLDBOX_URL)
-
-    # cookie banner
-    try:
-        await page.locator("#sp-cc-accept").click(timeout=3000)
+        cookie_btn = page.locator("#sp-cc-accept")
+        if await cookie_btn.count() > 0:
+            await cookie_btn.click()
+            await asyncio.sleep(1)
+            print("[COOKIE] accettato")
     except:
         pass
 
-    asins = set()
+    all_asins = set()
 
-    # scroll max 12 volte
-    for i in range(12):
-        await page.evaluate("window.scrollBy(0, 2000)")
-        await asyncio.sleep(1)
+    # scroll controllato
+    for i in range(8):  # ridotto per Railway FREE
+        await page.mouse.wheel(0, 5000)
+        await asyncio.sleep(1.5)
 
-        items = page.locator("div[data-asin]")
-        count = await items.count()
+        cards = await page.locator("div[data-asin]").all()
 
-        for j in range(count):
-            asin = await items.nth(j).get_attribute("data-asin")
+        for c in cards:
+            asin = await c.get_attribute("data-asin")
             if asin and len(asin) == 10:
-                asins.add(asin)
+                all_asins.add(asin)
 
-    return list(asins)[:100]
+        print(f"[SCRAPE] Scroll {i+1}/8 → ASIN raccolti: {len(all_asins)}")
 
-# --------------------------------------
-# MAIN
-# --------------------------------------
+    return list(all_asins)[:20]   # LIMITO A 20 PER EVITARE CRASH
+
+
+# ---- SCRAPING PAGINA PRODOTTO ----
+async def scrape_product(page, asin):
+    url = f"https://www.amazon.it/dp/{asin}"
+
+    print(f"[PRODUCT] Carico {url}")
+    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+    data = {}
+
+    # Titolo
+    try:
+        title = await page.locator("#productTitle").inner_text()
+        data["title"] = title.strip()
+    except:
+        data["title"] = "N/A"
+
+    # Prezzo attuale
+    try:
+        price_now = await page.locator(".a-price .a-offscreen").first.inner_text()
+        data["price_now"] = price_now
+    except:
+        data["price_now"] = "N/A"
+
+    # Prezzo consigliato
+    try:
+        price_cross = await page.locator("span.a-text-price .a-offscreen").first.inner_text()
+        data["price_was"] = price_cross
+    except:
+        data["price_was"] = "N/A"
+
+    # Stelle
+    try:
+        stars = await page.locator("span[data-hook='rating-out-of-text']").first.inner_text()
+        data["stars"] = stars
+    except:
+        data["stars"] = "N/A"
+
+    # Numero recensioni
+    try:
+        reviews = await page.locator("#acrCustomerReviewText").first.inner_text()
+        data["reviews"] = reviews
+    except:
+        data["reviews"] = "N/A"
+
+    # Link affiliato
+    data["link"] = f"https://www.amazon.it/dp/{asin}/?tag={AFFILIATE_TAG}"
+
+    return data
+
+
+# ---- FORMATTATORE OFFERTA ----
+def format_offer(p):
+    msg = f"🔥 <b>{p['title']}</b>\n"
+    msg += f"⭐ {p['stars']} • {p['reviews']}\n"
+    msg += f"💶 Prezzo: <b>{p['price_now']}</b>\n"
+    msg += f"❌ Prezzo precedente: {p['price_was']}\n"
+    msg += f"\n🔗 <a href=\"{p['link']}\">Apri l'offerta</a>"
+    return msg
+
+
+# ---- MAIN ----
 async def main():
-    send_tg("🔍 Analizzo le offerte Amazon Goldbox…")
+    tg("🔍 Avvio ricerca offerte Amazon (Railway)…")
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+    async with async_playwright() as pw:
+        browser = await launch_browser(pw)
+        context = await browser.new_context()
+        page = await context.new_page()
 
-        # 1) estrai ASIN goldbox
-        asins = await get_goldbox_asins(page)
+        # Scrape Goldbox ASIN
+        asins = await scrape_goldbox(page)
 
         if not asins:
-            send_tg("❌ Nessun prodotto trovato su Goldbox.")
+            tg("❌ Nessun prodotto trovato in Goldbox.")
             return
 
-        published = load_published()
-        result = []
+        tg(f"📦 {len(asins)} prodotti individuati. Analizzo prezzi…")
 
-        # 2) analizza fino a 40 prodotti
-        for asin in asins[:40]:
-            if asin in published:
-                continue
-            data = await scrape_product(page, asin)
-            if data["discount"] >= 10:  # minimo 10% sconto
-                result.append(data)
+        offers = []
+
+        for asin in asins:
+            try:
+                p = await scrape_product(page, asin)
+
+                if p["price_now"] != "N/A" and p["price_was"] != "N/A":
+                    offers.append(p)
+
+                await asyncio.sleep(1)
+            except Exception as e:
+                print("[ERR PRODUCT]", e)
+
+        if not offers:
+            tg("❌ Nessuna offerta valida.")
+            return
+
+        # ordina per sconto %
+        def parse_price(x):
+            try:
+                return float(x.replace("€","").replace(",","."))
+            except:
+                return 0
+
+        def discount(p):
+            return parse_price(p["price_was"]) - parse_price(p["price_now"])
+
+        offers = sorted(offers, key=discount, reverse=True)[:10]
+
+        tg("🎯 <b>Migliori 10 offerte Goldbox:</b>")
+
+        for o in offers:
+            tg(format_offer(o))
 
         await browser.close()
 
-    if not result:
-        send_tg("❌ Nessuna offerta valida trovata.")
-        return
-
-    # ordina per sconto
-    result = sorted(result, key=lambda x: x["discount"], reverse=True)
-
-    # invia solo i primi 10
-    new_asins = []
-
-    for product in result[:10]:
-        link = f"https://www.amazon.it/dp/{product['asin']}?tag={AFF_TAG}"
-
-        msg = (
-            f"🔥 <b>{product['title']}</b>\n"
-            f"⭐ {product['stars']} ({product['reviews']})\n"
-            f"💶 Prezzo: {product['price_now']}€\n"
-            f"❌ Prezzo consigliato: {product['price_old']}€\n"
-            f"🎯 Sconto: -{product['discount']}%\n\n"
-            f"🔗 <a href='{link}'>Apri l'offerta</a>"
-        )
-
-        send_tg(msg)
-        new_asins.append(product["asin"])
-
-    # salva per evitare ripubblicazione ultime 24h
-    published = new_asins + published
-    save_published(published[:30])
 
 if __name__ == "__main__":
     asyncio.run(main())
