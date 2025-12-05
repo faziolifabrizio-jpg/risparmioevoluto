@@ -4,67 +4,72 @@ import json
 import re
 import ast
 from typing import List, Dict, Any, Optional
-
 import requests
 
-# ================== CONFIG ==================
 
+# ======= CONFIG =======
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 AFFILIATE_TAG = "risparmioevol-21"
 
 GOLDBOX_URL = "https://www.amazon.it/gp/goldbox"
-MARKETPLACE_ID = "APJ6JRA9NG5V4"  # Amazon.it :contentReference[oaicite:0]{index=0}
+MARKETPLACE_ID = "APJ6JRA9NG5V4"  # marketplace Amazon Italia
 
-MAX_DEALS_FETCH = 100       # quanti deal chiediamo all’API
-MAX_OFFERS_SEND = 10        # quante offerte mandare a ogni esecuzione
+MAX_DEALS_FETCH = 100      # quanti deal chiedere massimo
+MAX_OFFERS_SEND = 10       # quante offerte pubblicare
 HISTORY_FILE = "published.json"
-HISTORY_HOURS = 24          # non ripubblicare la stessa offerta nelle ultime 24h
+HISTORY_HOURS = 24         # non ripostare negli ultimi 24h
+
+# fascia oraria
+START_HOUR = 8
+END_HOUR = 23
 
 DEBUG = os.getenv("DEBUG", "0") == "1"
 
+
+# ======= HEADERS =======
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept": "text/html,application/json",
+    "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8",
     "Connection": "keep-alive",
 }
 
-# ================== TELEGRAM ==================
 
+# ======= TELEGRAM =======
 
-def tg_text(msg: str) -> None:
+def tg_text(msg: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[TG] Variabili TELEGRAM_TOKEN / TELEGRAM_CHAT_ID mancanti")
+        print("[TG] TOKEN o CHAT_ID mancanti")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": msg,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False,
+        "disable_web_page_preview": False
     }
     try:
         r = requests.post(url, data=data, timeout=20)
         print("[TG text]", r.status_code)
     except Exception as e:
-        print("[TG text ERRORE]", e)
+        print("[TG ERRORE]", e)
 
 
-def tg_photo(photo_url: str, caption: str) -> None:
+def tg_photo(photo_url: str, caption: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[TG] Variabili TELEGRAM_TOKEN / TELEGRAM_CHAT_ID mancanti (photo)")
+        print("[TG] TOKEN o CHAT_ID mancanti (photo)")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     data = {
         "chat_id": TELEGRAM_CHAT_ID,
         "photo": photo_url,
         "caption": caption,
-        "parse_mode": "HTML",
+        "parse_mode": "HTML"
     }
     try:
         r = requests.post(url, data=data, timeout=20)
@@ -73,28 +78,27 @@ def tg_photo(photo_url: str, caption: str) -> None:
         print("[TG photo ERRORE]", e)
 
 
-# ================== UTILITY ==================
+# ======= UTILITY =======
 
-
-def parse_price(price: Optional[str]) -> Optional[float]:
-    if not price:
+def parse_price(s: Optional[str]) -> Optional[float]:
+    if not s:
         return None
     try:
-        p = price.replace("€", "").replace("\u00a0", "").replace(" ", "")
-        p = p.replace(".", "").replace(",", ".")
-        return float(p)
-    except Exception:
+        s = s.replace("€", "").replace("\u00a0", "").replace(" ", "")
+        s = s.replace(".", "").replace(",", ".")
+        return float(s)
+    except:
         return None
 
 
-def rating_to_stars(rating: Optional[float]) -> Optional[str]:
-    if rating is None:
+def rating_to_stars(r: Optional[float]) -> Optional[str]:
+    if r is None:
         return None
     try:
-        full = int(rating)
-        half = (rating - full) >= 0.5
+        full = int(r)
+        half = (r - full) >= 0.5
         return "⭐" * full + ("✨" if half else "")
-    except Exception:
+    except:
         return None
 
 
@@ -104,90 +108,60 @@ def load_history() -> List[Dict[str, Any]]:
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except:
         return []
 
 
-def save_history(history: List[Dict[str, Any]]) -> None:
+def save_history(x: List[Dict[str, Any]]):
     try:
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False)
+            json.dump(x, f, ensure_ascii=False)
     except Exception as e:
-        print("[HISTORY] Errore salvataggio:", e)
+        print("[HISTORY] Errore salvataggio", e)
 
 
-def filter_recent(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def filter_recent(hist):
     cutoff = time.time() - HISTORY_HOURS * 3600
-    return [h for h in history if h.get("ts", 0) >= cutoff]
+    return [h for h in hist if h.get("ts", 0) >= cutoff]
 
 
-# ================== GOLD BOX API ==================
+# ======= GOLD BOX JSON API =======
 
-
-def extract_sorted_deal_ids(html: str) -> List[str]:
-    """
-    Legge dal sorgente HTML la lista "sortedDealIDs"
-    che Amazon usa per costruire la pagina Goldbox.
-    """
-    # pattern simile al gist amazon_xmas.py :contentReference[oaicite:1]{index=1}
+def extract_deal_ids(html: str) -> List[str]:
     m = re.search(r'"sortedDealIDs"\s*:\s*(\[[^\]]+\])', html)
     if not m:
         print("[GOLDBOX] sortedDealIDs non trovati")
         return []
-
     text_list = m.group(1)
     try:
-        # può essere JSON puro o pseudo-lista Python
-        deal_ids = ast.literal_eval(text_list)
-        if isinstance(deal_ids, list):
-            return [str(x) for x in deal_ids]
-    except Exception:
+        ids = ast.literal_eval(text_list)
+        return [str(x) for x in ids]
+    except:
         pass
-
     try:
-        deal_ids = json.loads(text_list)
-        if isinstance(deal_ids, list):
-            return [str(x) for x in deal_ids]
-    except Exception:
+        ids = json.loads(text_list)
+        return [str(x) for x in ids]
+    except:
         pass
-
-    print("[GOLDBOX] impossibile parsare sortedDealIDs")
+    print("[GOLDBOX] Errore parsing sortedDealIDs")
     return []
 
 
-def get_session_id_from_cookies(cookies: Dict[str, str]) -> str:
-    """
-    L’API GetDeals vuole un sessionID. In genere è il cookie "session-id".
-    Se non c'è, prendiamo il primo valore giusto per non far fallire la chiamata.
-    """
-    if "session-id" in cookies:
-        return cookies["session-id"]
-    if cookies:
-        # primo cookie qualsiasi, come nel gist originale
-        return list(cookies.values())[0]
-    return ""
-
-
-def call_get_deals(session: requests.Session, deal_ids: List[str]) -> List[Dict[str, Any]]:
-    """
-    Effettua le POST verso /xa/dealcontent/v2/GetDeals spezzando
-    la lista di dealIDs in blocchi (es. 20 alla volta) e raccoglie
-    tutti i "dealDetails".
-    """
-    results: List[Dict[str, Any]] = []
+def get_session_cookie(session: requests.Session) -> str:
     cookies = session.cookies.get_dict()
-    session_id = get_session_id_from_cookies(cookies)
+    return cookies.get("session-id", next(iter(cookies.values()), ""))
 
+
+def call_api(session: requests.Session, deal_ids: List[str]) -> List[Dict[str, Any]]:
+    results = []
+    session_id = get_session_cookie(session)
     if not session_id:
-        print("[GETDEALS] Nessun sessionID trovato nei cookie")
+        print("[API] Nessun sessionID trovato")
         return []
 
-    # spezza in blocchi da 20
     chunk_size = 20
     for i in range(0, min(len(deal_ids), MAX_DEALS_FETCH), chunk_size):
-        chunk = deal_ids[i : i + chunk_size]
-
-        deal_targets = [{"dealID": d} for d in chunk]
+        chunk = deal_ids[i:i+chunk_size]
 
         payload = {
             "requestMetadata": {
@@ -195,22 +169,16 @@ def call_get_deals(session: requests.Session, deal_ids: List[str]) -> List[Dict[
                 "clientID": "goldbox_mobile_pc",
                 "sessionID": session_id,
             },
-            "dealTargets": deal_targets,
+            "dealTargets": [{"dealID": d} for d in chunk],
             "responseSize": "ALL",
             "itemResponseSize": "DEFAULT_WITH_PREEMPTIVE_LEAKING",
         }
 
-        nocache = str(int(time.time() * 1000))
-        url = f"https://www.amazon.it/xa/dealcontent/v2/GetDeals?nocache={nocache}"
+        url = f"https://www.amazon.it/xa/dealcontent/v2/GetDeals?nocache={int(time.time()*1000)}"
 
         try:
-            r = session.post(
-                url,
-                json=payload,
-                headers={"Accept": "application/json, text/javascript, */*; q=0.01"},
-                timeout=20,
-            )
-            print("[GETDEALS] status", r.status_code, "per blocco", i // chunk_size + 1)
+            r = session.post(url, json=payload, timeout=20)
+            print("[API] status", r.status_code)
             if r.status_code != 200:
                 continue
 
@@ -219,72 +187,41 @@ def call_get_deals(session: requests.Session, deal_ids: List[str]) -> List[Dict[
             for d in deal_details.values():
                 results.append(d)
 
-            time.sleep(0.5)  # piccola pausa per non insospettire Amazon
-
         except Exception as e:
-            print("[GETDEALS] Errore POST:", e)
+            print("[API] Errore:", e)
 
-    # debug: mostra un esempio completo di JSON di una singola offerta
-    if DEBUG and results:
-        print("========== ESEMPIO DEAL RAW ==========")
-        print(json.dumps(results[0], indent=2, ensure_ascii=False))
-        print("======================================")
+        time.sleep(0.5)
 
-    print(f"[GETDEALS] Deal totali raccolti: {len(results)}")
+    print(f"[API] Deal raccolti: {len(results)}")
     return results
 
 
-def fetch_goldbox_deals() -> List[Dict[str, Any]]:
-    """
-    - Apre la Goldbox con requests
-    - Estrae sortedDealIDs
-    - Chiama l’API GetDeals
-    - Restituisce la lista di deal raw (JSON)
-    """
-    session = requests.Session()
-    session.headers.update(HEADERS)
+def fetch_goldbox_json() -> List[Dict[str, Any]]:
+    s = requests.Session()
+    s.headers.update(HEADERS)
 
-    print("[GOLDBOX] GET pagina Goldbox…")
+    print("[GOLDBOX] GET pagina...")
     try:
-        r = session.get(GOLDBOX_URL, timeout=25)
+        r = s.get(GOLDBOX_URL, timeout=25)
     except Exception as e:
-        print("[GOLDBOX] Errore HTTP:", e)
+        print("[GOLDBOX] Errore:", e)
         return []
 
-    print("[GOLDBOX] status", r.status_code)
     if r.status_code != 200:
+        print("[GOLDBOX] Status:", r.status_code)
         return []
 
-    deal_ids = extract_sorted_deal_ids(r.text)
-    if not deal_ids:
+    ids = extract_deal_ids(r.text)
+    if not ids:
         return []
 
-    print(f"[GOLDBOX] sortedDealIDs trovati: {len(deal_ids)}")
-    return call_get_deals(session, deal_ids)
+    print("[GOLDBOX] sortedDealIDs:", len(ids))
+    return call_api(s, ids)
 
 
-# ================== MAPPATURA DEAL → PRODOTTO ==================
+# ======= MAP JSON → PRODOTTO =======
 
-
-def map_deal_to_product(deal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Qui traduciamo la struttura JSON di Amazon (dealDetails)
-    in un dizionario semplice con:
-      - asin
-      - title
-      - price_now_str
-      - list_price_str
-      - discount_pct
-      - rating
-      - review_count
-      - image
-      - url_affiliato
-
-    ATTENZIONE:
-    Amazon può cambiare le chiavi. Ho messo delle ipotesi comuni,
-    e in DEBUG il bot ti stampa il JSON raw per poterle affinare.
-    """
-    # candidate chiavi possibili per titolo
+def map_deal(deal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     title = (
         deal.get("title")
         or deal.get("dealTitle")
@@ -292,48 +229,16 @@ def map_deal_to_product(deal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         or deal.get("primaryItem", {}).get("title")
     )
 
-    # ASIN (potrebbe stare sotto vari campi, dipende dalla struttura)
     asin = (
         deal.get("asin")
         or deal.get("entityId")
         or deal.get("primaryItem", {}).get("asin")
     )
 
-    # rating medio (spesso in 0-5)
-    rating = None
-    # esempi di percorsi possibili (lasciati “best effort”):
-    rating = (
-        deal.get("averageRating")
-        or deal.get("rating")
-        or deal.get("primaryItem", {}).get("averageRating")
-    )
+    if not asin:
+        return None
 
-    if isinstance(rating, dict):
-        # alcuni JSON mettono {"value":4.6, ...}
-        rating = rating.get("value")
-
-    rating_num = None
-    try:
-        if rating is not None:
-            rating_num = float(str(rating).replace(",", "."))
-    except Exception:
-        rating_num = None
-
-    # numero recensioni (stesso discorso, chiavi ipotetiche)
-    review_count = (
-        deal.get("totalReviews")
-        or deal.get("reviewCount")
-        or deal.get("primaryItem", {}).get("totalReviews")
-    )
-
-    # immagine
-    image = (
-        deal.get("primaryItem", {}).get("imageUrl")
-        or deal.get("imageUrl")
-    )
-
-    # prezzi: ipotesi di chiavi comuni
-    # (da affinare dopo aver visto il JSON reale in DEBUG)
+    # prezzi
     price_now_str = (
         deal.get("dealPrice", {}).get("formattedPrice")
         or deal.get("price", {}).get("formattedPrice")
@@ -350,68 +255,84 @@ def map_deal_to_product(deal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     p_list = parse_price(list_price_str)
 
     if not p_now or not p_list or p_now >= p_list:
-        # niente sconto reale → scartiamo
-        return None
+        return None  # niente sconto
 
     discount_pct = round((p_list - p_now) / p_list * 100)
 
-    if not asin:
-        # senza ASIN non possiamo fare link affiliato
-        return None
+    rating = (
+        deal.get("averageRating")
+        or deal.get("rating")
+        or deal.get("primaryItem", {}).get("averageRating")
+    )
+
+    if isinstance(rating, dict):
+        rating = rating.get("value")
+
+    try:
+        rating_num = float(str(rating).replace(",", ".")) if rating else None
+    except:
+        rating_num = None
+
+    review_count = (
+        deal.get("totalReviews")
+        or deal.get("reviewCount")
+        or deal.get("primaryItem", {}).get("totalReviews")
+    )
+
+    image = (
+        deal.get("primaryItem", {}).get("imageUrl")
+        or deal.get("imageUrl")
+    )
 
     url_aff = f"https://www.amazon.it/dp/{asin}/?tag={AFFILIATE_TAG}"
 
-    prod = {
+    return {
         "asin": asin,
         "title": title or f"Offerta {asin}",
-        "price_now_str": price_now_str or f"{p_now:.2f}€",
-        "list_price_str": list_price_str or f"{p_list:.2f}€",
+        "price_now": price_now_str or f"{p_now:.2f}€",
+        "price_list": list_price_str or f"{p_list:.2f}€",
         "discount_pct": discount_pct,
-        "rating_num": rating_num,
-        "rating_stars": rating_to_stars(rating_num) if rating_num else None,
-        "review_count": review_count,
+        "rating": rating_num,
+        "stars": rating_to_stars(rating_num),
+        "reviews": review_count,
         "image": image,
         "url": url_aff,
     }
 
-    return prod
 
-
-# ================== MAIN LOGIC ==================
-
+# ======= MAIN =======
 
 def main():
-    print("[MAIN] Avvio bot Goldbox JSON…")
+    # BLOCCO ORARIO
+    hour = time.localtime().tm_hour
+    if not (START_HOUR <= hour <= END_HOUR):
+        print("[MAIN] Fuori fascia oraria")
+        return
+
     tg_text("🔍 <b>Analizzo le offerte Amazon (Goldbox API)…</b>")
 
-    raw_deals = fetch_goldbox_deals()
-    if not raw_deals:
-        tg_text("❌ <b>Nessun deal ricevuto da Amazon (Goldbox API).</b>")
+    deals = fetch_goldbox_json()
+    if not deals:
+        tg_text("❌ Nessun deal ricevuto da Amazon.")
         return
 
-    # mappiamo e filtriamo solo quelli con sconto valido
-    products: List[Dict[str, Any]] = []
-    for d in raw_deals:
-        prod = map_deal_to_product(d)
-        if prod:
-            products.append(prod)
-
-    if DEBUG:
-        print(f"[MAIN] prodotti mappati (scontati): {len(products)}")
+    products = []
+    for d in deals:
+        m = map_deal(d)
+        if m:
+            products.append(m)
 
     if not products:
-        tg_text("❌ <b>Nessun prodotto scontato trovato dalla Goldbox API.</b>")
+        tg_text("❌ Nessun prodotto scontato trovato.")
         return
 
-    # ordina per sconto decrescente
     products.sort(key=lambda x: x["discount_pct"], reverse=True)
 
-    # gestisci storico
     history = filter_recent(load_history())
     seen = {h["asin"] for h in history}
     now = time.time()
 
-    to_send: List[Dict[str, Any]] = []
+    to_send = []
     for p in products:
         if p["asin"] in seen:
             continue
@@ -423,33 +344,31 @@ def main():
     save_history(history)
 
     if not to_send:
-        tg_text("ℹ️ Nessuna nuova offerta (tutte già pubblicate nelle ultime 24h).")
+        tg_text("ℹ️ Nessuna nuova offerta da pubblicare.")
         return
 
-    # invio su Telegram
     for p in to_send:
-        caption_lines = [
+        lines = [
             f"🔥 <b>{p['title']}</b>",
         ]
-        if p.get("rating_stars"):
-            caption_lines.append(f"⭐ {p['rating_stars']}")
-        if p.get("review_count"):
-            caption_lines.append(f"💬 {p['review_count']} recensioni")
+        if p["stars"]:
+            lines.append(f"⭐ {p['stars']}")
+        if p["reviews"]:
+            lines.append(f"💬 {p['reviews']} recensioni")
+        lines.append(f"💶 Prezzo: <b>{p['price_now']}</b>")
+        lines.append(f"❌ Prezzo consigliato: <s>{p['price_list']}</s>")
+        lines.append(f"🎯 Sconto: <b>-{p['discount_pct']}%</b>")
+        lines.append("")
+        lines.append(f"🔗 <a href='{p['url']}'>Apri l'offerta</a>")
 
-        caption_lines.append(f"💶 Prezzo: <b>{p['price_now_str']}</b>")
-        caption_lines.append(f"❌ Prezzo consigliato: <s>{p['list_price_str']}</s>")
-        caption_lines.append(f"🎯 Sconto: <b>-{p['discount_pct']}%</b>")
-        caption_lines.append("")
-        caption_lines.append(f"🔗 <a href='{p['url']}'>Apri l'offerta</a>")
+        caption = "\n".join(lines)
 
-        caption = "\n".join(caption_lines)
-
-        if p.get("image"):
+        if p["image"]:
             tg_photo(p["image"], caption)
         else:
             tg_text(caption)
 
-    tg_text(f"✅ <b>Pubblicate {len(to_send)} offerte via Goldbox API.</b>")
+    tg_text(f"✅ Pubblicate {len(to_send)} offerte.")
 
 
 if __name__ == "__main__":
