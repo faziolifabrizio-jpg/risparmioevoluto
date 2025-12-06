@@ -14,9 +14,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 AFF_TAG = "risparmioevol-21"
 
-MAX_CARDS_PER_PAGE = 40      # quante card massimo per ogni pagina search
-MIN_DISCOUNT = 10            # sconto minimo in %
-MAX_OFFERS_SEND = 10         # quante offerte mandare su Telegram per ogni run
+MAX_CARDS_PER_PAGE = 40      
+MIN_DISCOUNT = 10            
+MAX_OFFERS_SEND = 10         
 
 SEARCH_PAGES = [
     "https://www.amazon.it/s?k=offerte",
@@ -24,18 +24,17 @@ SEARCH_PAGES = [
     "https://www.amazon.it/s?k=sconto",
 ]
 
-# Memorizza ASIN pubblicati nelle ultime 24 ore
 HISTORY_FILE = Path("published.json")
 if not HISTORY_FILE.exists():
-    HISTORY_FILE.write_text(json.dumps({}))
+    HISTORY_FILE.write_text("{}")
 
 
 def load_history():
     try:
         data = json.loads(HISTORY_FILE.read_text())
-        cutoff = time.time() - 86400  # 24 ore
+        cutoff = time.time() - 86400  
         return {asin: ts for asin, ts in data.items() if ts > cutoff}
-    except Exception:
+    except:
         return {}
 
 
@@ -46,30 +45,27 @@ def save_history(history):
 # =========================
 #   TELEGRAM
 # =========================
-def tg_send_text(msg: str) -> None:
+def tg_send_text(msg: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[TG TEXT] Variabili non impostate, salto invio")
+        print("[TG TEXT] Variabili non impostate")
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     r = requests.post(
-        url,
-        data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": msg,
-            "parse_mode": "HTML",
-        },
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
         timeout=20,
     )
     print("[TG TEXT]", r.status_code)
 
 
-def tg_send_photo(photo_url: str, caption: str) -> None:
+def tg_send_photo(photo_url: str, caption: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[TG PHOTO] Variabili non impostate, salto invio")
+        print("[TG PHOTO] Variabili non impostate")
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    if not photo_url:
+        tg_send_text(caption)
+        return
     r = requests.post(
-        url,
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
         data={
             "chat_id": TELEGRAM_CHAT_ID,
             "photo": photo_url,
@@ -78,181 +74,193 @@ def tg_send_photo(photo_url: str, caption: str) -> None:
         },
         timeout=20,
     )
-    print("[TG PHOTO]", r.status_code)
+    print("[TG PHOTO]", r.status_code, r.text)
 
 
 # ===============================
-#   DETTAGLIO PAGINA PRODOTTO
+#   DETTAGLIO PRODOTTO COMPLETO
 # ===============================
 async def get_full_product_data(asin: str, context):
-    """Visita la pagina prodotto e prende titolo, prezzi e sconto reali."""
     url = f"https://www.amazon.it/dp/{asin}"
+    url = url.replace("&", "&amp;")
+
     page = await context.new_page()
-    print(f"[DETAIL] Apro pagina prodotto per ASIN {asin}")
+    print(f"[DETAIL] Apro pagina {url}")
 
     title = f"Prodotto {asin}"
     price_now = None
     price_list = None
     discount = None
+    img_url = None
 
     try:
         await page.goto(url, timeout=30000)
 
-        # Cookie
         try:
             if await page.locator("#sp-cc-accept").is_visible():
                 await page.locator("#sp-cc-accept").click()
                 print("[DETAIL COOKIE] Accettato")
-        except Exception:
+        except:
             pass
 
         # Titolo
         try:
             await page.wait_for_selector("span#productTitle", timeout=8000)
-            t = await page.locator("span#productTitle").inner_text()
-            title = t.strip()
-        except Exception:
+            title = (await page.locator("span#productTitle").inner_text()).strip()
+        except:
+            pass
+
+        # Immagine
+        try:
+            img_url = await page.locator("#imgTagWrapperId img").get_attribute("src")
+        except:
             pass
 
         # Prezzo attuale
         try:
-            pnow = await page.locator("span.a-price span.a-offscreen").first.inner_text()
-            price_now = pnow.strip()
-        except Exception:
+            price_now = (await page.locator("span.a-price span.a-offscreen").first.inner_text()).strip()
+        except:
             pass
 
-        # Prezzo consigliato (intelligente)
+        # Prezzo consigliato filtrato (no €/L)
         try:
-            candidates = await page.locator(
-                "span.a-price.a-text-price > span.a-offscreen, "
-                "span.a-size-small.a-color-secondary.a-text-strike"
+            all_prices = await page.locator(
+                "span.a-price.a-text-price > span.a-offscreen, span.a-text-strike"
             ).all_inner_texts()
 
-            blacklist = ["/l", "/kg", "/ml", "/100", "litro", "kg", "ml", "al "]
-
-            for raw in candidates:
-                p = raw.strip()
-                if any(x in p.lower() for x in blacklist):
+            blacklist = ["/l", "/kg", "/ml", "litro", "/100", "confezione"]
+            for p in all_prices:
+                p_clean = p.strip()
+                if any(x in p_clean.lower() for x in blacklist):
                     continue
                 try:
-                    val = float(p.replace("€", "").replace(",", "."))
+                    v = float(p_clean.replace("€", "").replace(",", "."))
                     if price_now:
                         now_val = float(price_now.replace("€", "").replace(",", "."))
-                        if val > now_val:
-                            price_list = p
+                        if v > now_val:
+                            price_list = p_clean
                             break
-                except Exception:
+                except:
                     continue
-        except Exception:
+        except:
             pass
 
         # Sconto
         try:
             if price_now and price_list:
-                p_now = float(price_now.replace("€", "").replace(",", "."))
-                p_list = float(price_list.replace("€", "").replace(",", "."))
-                if p_list > p_now:
-                    discount = round(100 - (p_now / p_list * 100))
-        except Exception:
+                now = float(price_now.replace("€", "").replace(",", "."))
+                lst = float(price_list.replace("€", "").replace(",", "."))
+                discount = round(100 - (now / lst * 100))
+        except:
             pass
 
     finally:
         await page.close()
 
-    print(f"[DETAIL] ASIN {asin} → titolo OK, sconto: {discount}")
+    print(f"[DETAIL] FINITO ASIN {asin} → sconto: {discount}")
     return {
         "title": title,
         "price_now": price_now,
         "price_list": price_list,
         "discount": discount,
+        "img": img_url,
         "url": url,
     }
 
 
 # =========================
-# PARSING CARD AMAZON
+# PARSING CARD
 # =========================
-async def parse_card(card, page, idx: int, total: int):
-    print(f"[CHECK] Card {idx}/{total} → analizzo…")
+async def parse_card(card, page, idx, total):
+    print(f"[CHECK] Card {idx}/{total}")
+
     asin = await card.get_attribute("data-asin")
-    if not asin or asin.strip() == "":
+    if not asin:
         return None
 
-    # --- Titolo dalla card ---
-    raw_title = None
+    # ▼ IMMAGINE REALE
+    img_url = None
     try:
-        t = await card.locator(
-            "h2 a span, h2 span, span.a-size-base-plus, span.a-size-medium"
-        ).first.inner_text(timeout=1000)
-        t = t.strip()
-        raw_title = t
-    except Exception:
-        raw_title = None
+        img_el = await card.query_selector("img.s-image")
+        if img_el:
+            img_url = await img_el.get_attribute("src")
+    except:
+        pass
 
-    # Filtra titoli inutili/brevi
-    bad_words = ["pack", "kg", "ml", "pez", "litro", "variante", "conf", "%"]
-    if raw_title:
-        if len(raw_title) < 20 or any(w in raw_title.lower() for w in bad_words):
-            raw_title = None
+    # ▼ TITOLO
+    title = None
+    try:
+        title_el = await card.query_selector("h2 span")
+        if title_el:
+            title = (await title_el.inner_text()).strip()
+    except:
+        pass
 
-    # --- Prezzo dalla card ---
+    # ▼ PREZZO ATTUALE
     price_now = None
     try:
-        el = await card.query_selector("span.a-price > span.a-offscreen")
-        if el:
-            price_now = (await el.inner_text()).strip()
-    except Exception:
+        pn = await card.query_selector("span.a-price > span.a-offscreen")
+        if pn:
+            price_now = (await pn.inner_text()).strip()
+    except:
         pass
 
+    # ▼ PREZZO LISTA filtrato (no €/L)
     price_list = None
     try:
-        el2 = await card.query_selector("span.a-text-price > span.a-offscreen")
-        if el2:
-            p = (await el2.inner_text()).strip()
-            bad = ["/l", "/kg", "/ml", "/100", "litro", "kg", "ml"]
-            if not any(x in p.lower() for x in bad):
-                price_list = p
-    except Exception:
+        pl = await card.query_selector("span.a-text-price > span.a-offscreen")
+        if pl:
+            raw = (await pl.inner_text()).strip()
+            blacklist = ["/l", "/kg", "/ml", "/100", "litro"]
+            if not any(x in raw.lower() for x in blacklist):
+                price_list = raw
+    except:
         pass
 
-    # --- Sconto calcolato dalla card ---
+    # Calcolo sconto
     discount = None
     try:
         if price_now and price_list:
-            p_now = float(price_now.replace("€", "").replace(",", "."))
-            p_list = float(price_list.replace("€", "").replace(",", "."))
-            if p_list > p_now:
-                discount = round(100 - (p_now / p_list * 100))
-    except Exception:
-        discount = None
+            now = float(price_now.replace("€", "").replace(",", "."))
+            lst = float(price_list.replace("€", "").replace(",", "."))
+            if lst > now:
+                discount = round(100 - (now / lst * 100))
+    except:
+        pass
 
-    # Se titolo o prezzo consigliato mancano, o sconto è None → entro nella pagina prodotto
-    if raw_title is None or price_list is None or discount is None:
+    # Se manca qualcosa → ENTRO NELLA PAGINA PRODOTTO
+    if not title or not price_list or discount is None:
+        print(f"[DETAIL] Entrando nel prodotto per ASIN {asin}")
         details = await get_full_product_data(asin, page.context)
-        raw_title = details["title"]
+        title = details["title"]
         price_now = details["price_now"]
         price_list = details["price_list"]
         discount = details["discount"]
+        if details["img"]:
+            img_url = details["img"]
 
-    # Se ancora niente sconto valido → scarta
-    if not discount or discount < MIN_DISCOUNT:
+    # Scarta se sconto insufficiente
+    if discount is None or discount < MIN_DISCOUNT:
         print(f"[SKIP] ASIN {asin} → sconto insufficiente ({discount})")
         return None
 
-    print(f"[OK] ASIN {asin} → sconto {discount}%")
+    print(f"[OK] ASIN {asin}, sconto {discount}%")
+
+    link = f"https://www.amazon.it/dp/{asin}/?tag={AFF_TAG}".replace("&", "&amp;")
+
     return {
         "asin": asin,
-        "title": raw_title,
+        "title": title,
         "price_now": price_now,
         "price_list": price_list,
         "discount": discount,
-        "img": f"https://m.media-amazon.com/images/I/{asin}.jpg",
-        "url": f"https://www.amazon.it/dp/{asin}/?tag={AFF_TAG}",
+        "img": img_url,
+        "url": link,
     }
 
 
 # =========================
-# SCRAPING AMAZON
+# SCRAPE TOTALE
 # =========================
 async def scrape_all(page):
     results = {}
@@ -261,41 +269,38 @@ async def scrape_all(page):
         print("[SCRAPE] Carico:", url)
         await page.goto(url, timeout=30000)
 
-        # Cookie
         try:
             if await page.locator("#sp-cc-accept").is_visible():
                 await page.locator("#sp-cc-accept").click()
                 print("[COOKIE] Accettato")
-        except Exception:
+        except:
             pass
 
         cards = await page.locator("div[data-asin]").element_handles()
-        total_cards = len(cards)
-        print(f"[SCRAPE] Carte trovate: {total_cards}")
+        count = len(cards)
+        print(f"[SCRAPE] Carte trovate: {count}")
 
-        # Limitiamo il numero di card per velocizzare
         cards = cards[:MAX_CARDS_PER_PAGE]
-        print(f"[SCRAPE] Analizzo solo le prime {len(cards)} card")
 
-        for idx, c in enumerate(cards, start=1):
-            data = await parse_card(c, page, idx, len(cards))
+        for idx, card in enumerate(cards, start=1):
+            data = await parse_card(card, page, idx, len(cards))
             if data:
                 results[data["asin"]] = data
 
-    print("[SCRAPE] Totale prodotti scontati (deduplicati):", len(results))
+    print("[SCRAPE] Totale prodotti scontati:", len(results))
     return list(results.values())
 
 
 # =========================
-# MAIN BOT
+# MAIN
 # =========================
 async def main():
     tg_send_text("🔍 Cerco le migliori offerte Amazon…")
 
     history = load_history()
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled"],
         )
@@ -312,26 +317,28 @@ async def main():
             await browser.close()
             return
 
-        # Ordina per sconto
+        # Ordina per sconto discendente
         items.sort(key=lambda x: x["discount"], reverse=True)
 
         publish = items[:MAX_OFFERS_SEND]
 
-        for p_item in publish:
-            caption = f"""🔥 <b>{p_item['title']}</b>
+        for p in publish:
+            caption = f"""🔥 <b>{p['title']}</b>
 
-💶 <b>{p_item['price_now']}</b>
-❌ <s>{p_item['price_list']}</s>
-🎯 Sconto: <b>{p_item['discount']}%</b>
+💶 <b>{p['price_now']}</b>
+❌ <s>{p['price_list']}</s>
+🎯 Sconto: <b>{p['discount']}%</b>
 
-🔗 <a href="{p_item['url']}">Apri l'offerta</a>
+🔗 <a href="{p['url']}">Apri l'offerta</a>
 """
-            tg_send_photo(p_item["img"], caption)
-            history[p_item["asin"]] = time.time()
+            tg_send_photo(p["img"], caption)
+
+            history[p["asin"]] = time.time()
             save_history(history)
 
-        await browser.close()
         tg_send_text(f"✅ Pubblicate {len(publish)} offerte migliori (per sconto).")
+
+        await browser.close()
 
 
 if __name__ == "__main__":
