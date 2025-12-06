@@ -1,0 +1,13 @@
+{
+  "build": {
+    "nixpacksPlan": {
+      "phases": {
+        "install-playwright": {
+          "commands": [
+            "playwright install chromium"
+          ]
+        }
+      }
+    }
+  }
+}
