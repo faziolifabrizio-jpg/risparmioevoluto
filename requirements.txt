@@ -1,5 +1,0 @@
-playwright
-python-telegram-bot==21.7
-requests
-beautifulsoup4
-lxml
